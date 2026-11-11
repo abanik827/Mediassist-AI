@@ -1,0 +1,6 @@
+{
+  "name": "MediAssist AI",
+  "description": "Understand doctor prescriptions, decode medical instructions, track medications, and schedule reminders with multi-agent AI verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
