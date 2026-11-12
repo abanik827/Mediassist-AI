@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { PageView, Prescription, Reminder, Medication } from './types';
+import React, { useState, useEffect } from 'react';
+import { PageView, Prescription, Reminder, Medication, AgentReport } from './types';
 import { 
   INITIAL_PRESCRIPTIONS, 
   INITIAL_REMINDERS, 
@@ -21,10 +21,59 @@ import { VoiceAssistantPage } from './components/pages/VoiceAssistantPage';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<PageView>('landing');
-  const [prescriptions] = useState<Prescription[]>(INITIAL_PRESCRIPTIONS);
-  const [selectedPrescription, setSelectedPrescription] = useState<Prescription>(INITIAL_PRESCRIPTIONS[0]);
-  const [reminders, setReminders] = useState<Reminder[]>(INITIAL_REMINDERS);
+
+  // Load Prescriptions from localStorage with fallback
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>(() => {
+    try {
+      const saved = localStorage.getItem('mediassist_prescriptions');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Could not read prescriptions from localStorage', e);
+    }
+    return INITIAL_PRESCRIPTIONS;
+  });
+
+  const [selectedPrescription, setSelectedPrescription] = useState<Prescription>(() => {
+    return prescriptions[0] || INITIAL_PRESCRIPTIONS[0];
+  });
+
+  // Load Reminders from localStorage with fallback
+  const [reminders, setReminders] = useState<Reminder[]>(() => {
+    try {
+      const saved = localStorage.getItem('mediassist_reminders');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Could not read reminders from localStorage', e);
+    }
+    return INITIAL_REMINDERS;
+  });
+
+  const [latestAgentReports, setLatestAgentReports] = useState<AgentReport[]>([]);
   const [initialVoiceQuestion, setInitialVoiceQuestion] = useState<string>('');
+
+  // Persist Prescriptions to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('mediassist_prescriptions', JSON.stringify(prescriptions));
+    } catch (e) {
+      console.warn('Could not persist prescriptions to localStorage', e);
+    }
+  }, [prescriptions]);
+
+  // Persist Reminders to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('mediassist_reminders', JSON.stringify(reminders));
+    } catch (e) {
+      console.warn('Could not persist reminders to localStorage', e);
+    }
+  }, [reminders]);
 
   // Reminder state management
   const handleToggleReminder = (id: string) => {
@@ -51,7 +100,7 @@ export default function App() {
     setReminders((prev) => prev.map((r) => ({ ...r, takenToday: false })));
   };
 
-  // Convert scanned medication directly into active reminder
+  // Convert scanned medication directly into active reminder (Human-in-the-Loop confirmed)
   const handleAddMedicationToReminders = (med: Medication, doctorName: string) => {
     const defaultTime =
       med.timing === 'Morning'
@@ -73,6 +122,7 @@ export default function App() {
       foodRelation: `${med.foodRelation} · ${med.instructions}`,
       takenToday: false,
       notes: `From prescription by ${doctorName}`,
+      humanConfirmed: true,
     };
 
     setReminders((prev) => [newReminder, ...prev]);
@@ -98,15 +148,24 @@ export default function App() {
         foodRelation: `${med.foodRelation} (${med.decodedFrequency})`,
         takenToday: false,
         notes: `Imported from ${doctorName}`,
+        humanConfirmed: true,
       };
     });
 
     setReminders((prev) => [...newReminders, ...prev]);
   };
 
+  const handleSaveNewPrescription = (newRx: Prescription) => {
+    setPrescriptions((prev) => [newRx, ...prev.filter((p) => p.id !== newRx.id)]);
+    setSelectedPrescription(newRx);
+  };
+
   const handleAskAi = (question: string) => {
     setInitialVoiceQuestion(question);
   };
+
+  // Compile all active medications across prescriptions for context-aware AI
+  const allActiveMedications = selectedPrescription?.medications || prescriptions[0]?.medications || [];
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans">
@@ -117,7 +176,7 @@ export default function App() {
         reminderCount={reminders.filter((r) => !r.takenToday).length}
       />
 
-      {/* Main Content Router */}
+      {/* Main Content Viewport */}
       <main className="flex-1">
         {currentPage === 'landing' && (
           <LandingPage onNavigate={setCurrentPage} />
@@ -141,11 +200,17 @@ export default function App() {
             onSelectPrescription={setSelectedPrescription}
             onAddMedicationToReminders={handleAddMedicationToReminders}
             onAddAllToReminders={handleAddAllToReminders}
+            onSaveNewPrescription={handleSaveNewPrescription}
+            onAgentReportsUpdated={setLatestAgentReports}
           />
         )}
 
         {currentPage === 'agents' && (
-          <AgentsPage agents={INITIAL_AGENTS} />
+          <AgentsPage
+            agents={INITIAL_AGENTS}
+            prescriptions={prescriptions}
+            latestReports={latestAgentReports}
+          />
         )}
 
         {currentPage === 'reminders' && (
@@ -163,6 +228,7 @@ export default function App() {
           <VoiceAssistantPage
             initialQuestion={initialVoiceQuestion}
             onClearInitialQuestion={() => setInitialVoiceQuestion('')}
+            activeMedications={allActiveMedications}
           />
         )}
       </main>

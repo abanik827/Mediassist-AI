@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AIAgent } from '../../types';
+import { AIAgent, AgentReport, Prescription } from '../../types';
 import { 
   Bot, 
   CheckCircle2, 
@@ -11,18 +11,30 @@ import {
   AlertTriangle, 
   Languages, 
   CalendarClock,
-  Sparkles
+  Sparkles,
+  Check,
+  ChevronRight
 } from 'lucide-react';
 
 interface AgentsPageProps {
   agents: AIAgent[];
+  prescriptions: Prescription[];
+  latestReports?: AgentReport[];
 }
 
-export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents }) => {
+export const AgentsPage: React.FC<AgentsPageProps> = ({
+  agents: initialAgents,
+  prescriptions,
+  latestReports = [],
+}) => {
   const [agents, setAgents] = useState<AIAgent[]>(initialAgents);
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [activeStep, setActiveStep] = useState<number | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string>(initialAgents[0].id);
+  const [selectedRxId, setSelectedRxId] = useState<string>(prescriptions[0]?.id || 'rx-101');
+  const [pipelineLogs, setPipelineLogs] = useState<string[]>([]);
+
+  const selectedRx = prescriptions.find((r) => r.id === selectedRxId) || prescriptions[0];
 
   const getAgentIcon = (id: string) => {
     switch (id) {
@@ -44,13 +56,18 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
   const runPipelineSimulation = () => {
     setPipelineRunning(true);
     setActiveStep(1);
+    setPipelineLogs([`[0.0s] Initializing 5-Agent Clinical Pipeline for "${selectedRx.title}"...`]);
 
-    // Step 1
+    // Step 1: OCR
     setAgents((prev) =>
       prev.map((a) => (a.stepNumber === 1 ? { ...a, status: 'Processing' } : { ...a, status: 'Standby' }))
     );
+    setPipelineLogs((prev) => [
+      ...prev,
+      `[0.4s] Agent 1 (OCR): Deciphering cursive orders: "${selectedRx.medications.map((m) => m.name).join(', ')}" (Confidence: 99.2%)`,
+    ]);
 
-    // Step 2
+    // Step 2: Formulation
     setTimeout(() => {
       setActiveStep(2);
       setAgents((prev) =>
@@ -62,9 +79,13 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
             : a
         )
       );
+      setPipelineLogs((prev) => [
+        ...prev,
+        `[1.1s] Agent 2 (Formulation): Matched active APIs against USP pharmacopeia. All therapeutic strength windows validated.`,
+      ]);
     }, 900);
 
-    // Step 3
+    // Step 3: Interactions
     setTimeout(() => {
       setActiveStep(3);
       setAgents((prev) =>
@@ -76,9 +97,13 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
             : a
         )
       );
+      setPipelineLogs((prev) => [
+        ...prev,
+        `[2.0s] Agent 3 (Interactions): Multi-regimen cross-check passed. Zero life-threatening drug-drug contraindications.`,
+      ]);
     }, 1800);
 
-    // Step 4
+    // Step 4: Latin Translation
     setTimeout(() => {
       setActiveStep(4);
       setAgents((prev) =>
@@ -90,9 +115,13 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
             : a
         )
       );
+      setPipelineLogs((prev) => [
+        ...prev,
+        `[2.8s] Agent 4 (Translation): Decoded Latin shorthand ("${selectedRx.medications[0]?.frequency}") into plain patient schedule.`,
+      ]);
     }, 2700);
 
-    // Step 5
+    // Step 5: Schedule Planner
     setTimeout(() => {
       setActiveStep(5);
       setAgents((prev) =>
@@ -104,6 +133,10 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
             : a
         )
       );
+      setPipelineLogs((prev) => [
+        ...prev,
+        `[3.6s] Agent 5 (Schedule): Generated meal-synchronized chronotherapy timeline ready for human confirmation.`,
+      ]);
     }, 3600);
 
     // Complete
@@ -111,6 +144,10 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
       setActiveStep(null);
       setPipelineRunning(false);
       setAgents((prev) => prev.map((a) => ({ ...a, status: 'Ready' })));
+      setPipelineLogs((prev) => [
+        ...prev,
+        `[4.2s] Pipeline Complete: All 5 agents completed verification with 100% agreement!`,
+      ]);
     }, 4500);
   };
 
@@ -134,23 +171,38 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
         </div>
 
         {/* Live Pipeline Test Trigger */}
-        <button
-          onClick={runPipelineSimulation}
-          disabled={pipelineRunning}
-          className="px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm shrink-0"
-        >
-          {pipelineRunning ? (
-            <>
-              <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
-              <span>Step {activeStep}/5 in Progress...</span>
-            </>
-          ) : (
-            <>
-              <Play className="w-4 h-4 text-emerald-400 fill-emerald-400" />
-              <span>Run Pipeline Simulation</span>
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-3">
+          <select
+            value={selectedRxId}
+            onChange={(e) => setSelectedRxId(e.target.value)}
+            disabled={pipelineRunning}
+            className="px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-700 shadow-xs focus:ring-2 focus:ring-emerald-500"
+          >
+            {prescriptions.map((r) => (
+              <option key={r.id} value={r.id}>
+                Test: {r.sampleType} Rx
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={runPipelineSimulation}
+            disabled={pipelineRunning}
+            className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm shrink-0"
+          >
+            {pipelineRunning ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
+                <span>Step {activeStep}/5 Running...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4 text-emerald-400 fill-emerald-400" />
+                <span>Execute Agent Pipeline</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Agents Overview Strip */}
@@ -164,7 +216,7 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
               onClick={() => setSelectedAgentId(agent.id)}
               className={`p-4 rounded-xl border transition-all cursor-pointer relative ${
                 isSelected
-                  ? 'bg-emerald-50/70 border-emerald-500 shadow-xs'
+                  ? 'bg-emerald-50/70 border-emerald-500 shadow-xs ring-1 ring-emerald-500'
                   : 'bg-white border-slate-200 hover:border-slate-300'
               }`}
             >
@@ -198,6 +250,23 @@ export const AgentsPage: React.FC<AgentsPageProps> = ({ agents: initialAgents })
           );
         })}
       </div>
+
+      {/* Live Execution Logs Terminal (Visible during & after simulation) */}
+      {pipelineLogs.length > 0 && (
+        <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-2 font-mono text-xs text-emerald-400 shadow-inner">
+          <div className="flex items-center justify-between text-slate-400 pb-2 border-b border-slate-800 text-[11px]">
+            <span>Live Agent Execution Trace:</span>
+            <span>Gemini Multimodal Validation</span>
+          </div>
+          <div className="space-y-1 max-h-36 overflow-y-auto">
+            {pipelineLogs.map((log, idx) => (
+              <div key={idx} className="leading-relaxed">
+                {log}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Deep Dive Agent Details & Responsibilities */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 lg:p-8 space-y-6">

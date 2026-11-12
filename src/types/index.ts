@@ -4,13 +4,13 @@ export interface Medication {
   id: string;
   name: string;
   dosage: string;
-  form: 'Tablet' | 'Capsule' | 'Syrup' | 'Inhaler' | 'Injection' | 'Drops';
+  form: 'Tablet' | 'Capsule' | 'Syrup' | 'Inhaler' | 'Injection' | 'Drops' | string;
   frequency: string;
   latinAbbr?: string;
   decodedFrequency: string;
   duration: string;
-  timing: 'Morning' | 'Afternoon' | 'Evening' | 'Bedtime' | 'Twice daily' | 'Thrice daily';
-  foodRelation: 'Before meals' | 'With food' | 'After meals' | 'Empty stomach' | 'As needed';
+  timing: 'Morning' | 'Afternoon' | 'Evening' | 'Bedtime' | 'Twice daily' | 'Thrice daily' | string;
+  foodRelation: 'Before meals' | 'With food' | 'After meals' | 'Empty stomach' | 'As needed' | string;
   instructions: string;
   precautions: string[];
   purpose: string;
@@ -27,9 +27,11 @@ export interface Prescription {
   patientAge: number;
   diagnosisNote?: string;
   medications: Medication[];
-  status: 'Verified' | 'Pending Review' | 'Flagged Warning';
+  status: 'Verified' | 'Pending Review' | 'Flagged Warning' | string;
   imagePlaceholderText: string;
-  sampleType: 'Cardiology' | 'Infection' | 'Endocrine' | 'Respiratory';
+  sampleType: 'Cardiology' | 'Infection' | 'Endocrine' | 'Respiratory' | 'Custom Scan';
+  customImageUrl?: string;
+  humanVerified?: boolean;
 }
 
 export interface Reminder {
@@ -42,6 +44,7 @@ export interface Reminder {
   takenToday: boolean;
   notes?: string;
   prescriptionId?: string;
+  humanConfirmed?: boolean;
 }
 
 export type AgentStatus = 'Ready' | 'Active' | 'Processing' | 'Standby';
@@ -59,10 +62,19 @@ export interface AIAgent {
   stepNumber: number;
 }
 
+export interface AgentReport {
+  agentNumber: number;
+  agentName: string;
+  finding: string;
+  confidence: number;
+  status: string;
+}
+
 export interface VoiceMessage {
   id: string;
   sender: 'user' | 'assistant';
   text: string;
   timestamp: string;
   audioAvailable?: boolean;
+  source?: string;
 }
