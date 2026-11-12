@@ -9,29 +9,33 @@ import {
   Circle, 
   Clock, 
   Calendar, 
-  Filter, 
   Search,
   Check,
-  RotateCcw
+  RotateCcw,
+  Eye
 } from 'lucide-react';
 import { ReminderModal } from '../modals/ReminderModal';
 
 interface RemindersPageProps {
   reminders: Reminder[];
+  isDemoMode?: boolean;
   onToggleReminder: (id: string) => void;
   onAddReminder: (reminder: Reminder) => void;
   onEditReminder: (reminder: Reminder) => void;
   onDeleteReminder: (id: string) => void;
   onResetAllToday: () => void;
+  onToggleDemoMode?: () => void;
 }
 
 export const RemindersPage: React.FC<RemindersPageProps> = ({
   reminders,
+  isDemoMode = false,
   onToggleReminder,
   onAddReminder,
   onEditReminder,
   onDeleteReminder,
   onResetAllToday,
+  onToggleDemoMode,
 }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState<Reminder | null>(null);
@@ -86,7 +90,7 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
         <div>
           <div className="flex items-center gap-2 text-emerald-600 text-xs font-semibold uppercase tracking-wider">
             <Bell className="w-4 h-4" />
-            <span>Medication Adherence Engine</span>
+            <span>Medication Adherence Schedule</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
             Prescription Reminders
@@ -97,18 +101,21 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={onResetAllToday}
-            className="px-3.5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
-            title="Reset taken status for a new day"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-            <span>Reset Day</span>
-          </button>
+          {totalCount > 0 && (
+            <button
+              onClick={onResetAllToday}
+              className="px-3.5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Reset taken status for a new day"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+              <span>Reset Day</span>
+            </button>
+          )}
 
           <button
             onClick={handleOpenAdd}
-            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
+            disabled={isDemoMode}
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Add New Reminder</span>
@@ -193,18 +200,23 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
             <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
               <Bell className="w-6 h-6" />
             </div>
-            <h3 className="text-base font-bold text-slate-800">No reminders found</h3>
+            <h3 className="text-base font-bold text-slate-800">
+              {searchQuery ? 'No matching reminders found' : 'No medication reminders scheduled yet'}
+            </h3>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
               {searchQuery
-                ? 'Try a different search query or reset your filter.'
-                : 'You have not confirmed any medication reminders yet. Scan a prescription or click "Add New Reminder" above.'}
+                ? 'Try a different search term or clear the filter.'
+                : 'Upload and verify a prescription in the Scanner, or click "Add New Reminder" above to set a schedule.'}
             </p>
-            <button
-              onClick={handleOpenAdd}
-              className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
-            >
-              Add First Reminder
-            </button>
+            {!searchQuery && (
+              <button
+                onClick={handleOpenAdd}
+                disabled={isDemoMode}
+                className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-semibold cursor-pointer shadow-xs"
+              >
+                Add Custom Reminder
+              </button>
+            )}
           </div>
         ) : (
           filteredReminders.map((rem) => (
@@ -220,6 +232,7 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
               <div className="flex items-start gap-4">
                 <button
                   onClick={() => onToggleReminder(rem.id)}
+                  disabled={isDemoMode}
                   className="mt-1 text-slate-400 hover:text-emerald-600 transition-colors focus:outline-none cursor-pointer shrink-0"
                   title={rem.takenToday ? 'Mark as pending' : 'Mark dose as taken'}
                 >
@@ -248,6 +261,11 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
                         <span>Taken Today</span>
                       </span>
                     )}
+                    {rem.isDemo && (
+                      <span className="text-[10px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        Demo
+                      </span>
+                    )}
                   </div>
 
                   {/* Clean unboxed metadata with separators */}
@@ -261,8 +279,12 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
                       <Calendar className="w-3.5 h-3.5 text-slate-400" />
                       <span>Duration: <strong className="text-slate-700">{rem.duration}</strong></span>
                     </span>
-                    <span>·</span>
-                    <span>{rem.foodRelation}</span>
+                    {rem.foodRelation && (
+                      <>
+                        <span>·</span>
+                        <span>{rem.foodRelation}</span>
+                      </>
+                    )}
                   </div>
 
                   {rem.notes && (
@@ -277,6 +299,7 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
               <div className="flex items-center gap-2 shrink-0 self-end sm:self-center border-t sm:border-t-0 pt-2 sm:pt-0 w-full sm:w-auto justify-end">
                 <button
                   onClick={() => onToggleReminder(rem.id)}
+                  disabled={isDemoMode}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                     rem.takenToday
                       ? 'bg-slate-100 hover:bg-slate-200 text-slate-700'
@@ -288,6 +311,7 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
 
                 <button
                   onClick={() => handleOpenEdit(rem)}
+                  disabled={isDemoMode}
                   className="p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
                   title="Edit reminder"
                 >
@@ -312,6 +336,7 @@ export const RemindersPage: React.FC<RemindersPageProps> = ({
                 ) : (
                   <button
                     onClick={() => setDeleteConfirmId(rem.id)}
+                    disabled={isDemoMode}
                     className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                     title="Delete reminder"
                   >

@@ -1,37 +1,61 @@
 export type PageView = 'landing' | 'dashboard' | 'scanner' | 'agents' | 'reminders' | 'voice';
 
+export interface ExtractedPrescriptionItem {
+  id: string;
+  medicine_name_as_written: string;
+  dosage_as_written: string | null;
+  frequency_as_written: string | null;
+  timing_as_written: string | null;
+  duration_as_written: string | null;
+  additional_instructions_as_written: string | null;
+  is_uncertain?: boolean;
+}
+
+export interface ExtractedPrescriptionData {
+  doctor_name: string | null;
+  patient_name: string | null;
+  clinic_name: string | null;
+  prescription_date: string | null;
+  medications: ExtractedPrescriptionItem[];
+  uncertain_or_unreadable_fields: string[];
+}
+
 export interface Medication {
   id: string;
   name: string;
   dosage: string;
-  form: 'Tablet' | 'Capsule' | 'Syrup' | 'Inhaler' | 'Injection' | 'Drops' | string;
+  form?: string;
   frequency: string;
   latinAbbr?: string;
-  decodedFrequency: string;
+  decodedFrequency?: string;
   duration: string;
-  timing: 'Morning' | 'Afternoon' | 'Evening' | 'Bedtime' | 'Twice daily' | 'Thrice daily' | string;
-  foodRelation: 'Before meals' | 'With food' | 'After meals' | 'Empty stomach' | 'As needed' | string;
+  timing?: string;
+  foodRelation?: string;
   instructions: string;
-  precautions: string[];
-  purpose: string;
+  precautions?: string[];
+  purpose?: string;
+  isUncertain?: boolean;
 }
 
 export interface Prescription {
   id: string;
   title: string;
-  doctorName: string;
-  specialty: string;
-  clinic: string;
-  date: string;
-  patientName: string;
-  patientAge: number;
-  diagnosisNote?: string;
+  doctorName: string | null;
+  specialty?: string | null;
+  clinic: string | null;
+  date: string | null;
+  patientName: string | null;
+  patientAge?: number | null;
+  diagnosisNote?: string | null;
   medications: Medication[];
-  status: 'Verified' | 'Pending Review' | 'Flagged Warning' | string;
-  imagePlaceholderText: string;
-  sampleType: 'Cardiology' | 'Infection' | 'Endocrine' | 'Respiratory' | 'Custom Scan';
+  status: 'User Scanned' | 'Pending Verification' | 'Demonstration Sample' | string;
+  imagePlaceholderText?: string;
+  sampleType?: 'Custom Scan' | 'Cardiology' | 'Infection' | 'Endocrine' | 'Respiratory';
   customImageUrl?: string;
+  uploadedFileName?: string;
   humanVerified?: boolean;
+  uncertainFields?: string[];
+  isDemo?: boolean;
 }
 
 export interface Reminder {
@@ -40,14 +64,15 @@ export interface Reminder {
   dosage: string;
   time: string; // e.g. "08:00 AM"
   duration: string; // e.g. "7 Days", "30 Days", "Ongoing"
-  foodRelation: string;
+  foodRelation?: string;
   takenToday: boolean;
   notes?: string;
   prescriptionId?: string;
   humanConfirmed?: boolean;
+  isDemo?: boolean;
 }
 
-export type AgentStatus = 'Ready' | 'Active' | 'Processing' | 'Standby';
+export type AgentStatus = 'Ready' | 'Active' | 'Processing' | 'Standby' | 'Awaiting Scan';
 
 export interface AIAgent {
   id: string;
@@ -58,7 +83,6 @@ export interface AIAgent {
   inputData: string;
   outputArtifact: string;
   status: AgentStatus;
-  confidenceScore: number;
   stepNumber: number;
 }
 
@@ -66,7 +90,6 @@ export interface AgentReport {
   agentNumber: number;
   agentName: string;
   finding: string;
-  confidence: number;
   status: string;
 }
 

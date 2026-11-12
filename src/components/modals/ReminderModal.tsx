@@ -28,7 +28,7 @@ export const ReminderModal: React.FC<ReminderModalProps> = ({
       setDosage(initialData.dosage);
       setTime(initialData.time);
       setDuration(initialData.duration);
-      setFoodRelation(initialData.foodRelation);
+      setFoodRelation(initialData.foodRelation || 'Take with food');
       setNotes(initialData.notes || '');
     } else {
       setMedicineName('');

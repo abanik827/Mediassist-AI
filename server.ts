@@ -12,13 +12,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-// Increase payload limit for high-resolution prescription photos/scans
+// Payload limit for prescription photos/scans
 app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
-// Initialize Google GenAI client (User-Agent header set for telemetry)
+// Initialize Google GenAI client
+const apiKey = process.env.GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || '',
+  apiKey,
   httpOptions: {
     headers: {
       'User-Agent': 'aistudio-build',
@@ -35,354 +36,228 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// 1. Multimodal Prescription Scanner & 5-Agent Extraction Endpoint
+// Multimodal Prescription Scanner Endpoint
 app.post('/api/scan-prescription', async (req, res) => {
   try {
-    const { imageBase64, mimeType, sampleContext } = req.body;
+    const { imageBase64, mimeType } = req.body;
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn('GEMINI_API_KEY is not configured; using validated synthetic fallback.');
-      return res.status(200).json({
-        success: true,
-        source: 'synthetic-fallback',
-        message: 'Processed using validated clinical pharmacopeia dataset (No API key found in secrets).',
-        prescription: sampleContext || getSampleFallbackPrescription(),
-        agentReports: getSampleAgentReports(),
+    if (!imageBase64) {
+      return res.status(400).json({
+        success: false,
+        error: 'No prescription document or image payload was provided. Please upload a file to scan.',
       });
     }
 
-    const systemInstruction = `You are MediAssist AI, a clinical prescription information assistant and medication adherence organizer.
-You are an educational aid, NOT a certified medical device.
-Your task is to analyze the uploaded doctor prescription image or clinical text and extract structured information.
-Extract:
-1. Physician Name, Medical Specialty, Clinic / Hospital, Date, Patient Name, Patient Age, Diagnostic Note.
-2. Complete list of prescribed medications:
-   - Medication Name (brand and active generic formulation)
-   - Dosage and Unit (e.g. 500 mg, 10 mg)
-   - Form (Tablet, Capsule, Syrup, Inhaler, Injection, Drops)
-   - Doctor's exact Sig order / frequency string (e.g. "1 tab b.i.d. p.c.")
-   - Latin abbreviation decoded in plain language (e.g. "b.i.d. = twice daily; p.c. = after meals")
-   - Decoded Frequency in plain English
-   - Prescribed Duration (e.g. "7 Days", "30 Days")
-   - Timing category (Morning, Afternoon, Evening, Bedtime, Twice daily, Thrice daily)
-   - Food Relation (Before meals, With food, After meals, Empty stomach, As needed)
-   - Plain-language patient instructions (written at a 6th grade reading level)
-   - Cautionary warnings & dietary precautions (e.g. avoid grapefruit, complete full course, take with food)
-   - Clinical Purpose / Therapeutic target
-3. Agent Breakdowns:
-   - Agent 1: OCR & Handwriting Recognition findings
-   - Agent 2: Clinical Formulation & Pharmacopeia verification findings
-   - Agent 3: Drug Interaction & Safety evaluation findings
-   - Agent 4: Patient Clarification & Translation findings
-   - Agent 5: Chronotherapy & Schedule Planner findings
-Never recommend dosage modifications or change treatments independently. Always require human-in-the-loop verification.`;
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(503).json({
+        success: false,
+        error: 'Gemini API key is not configured on the server. Please check server environment settings.',
+      });
+    }
 
-    const contents: any[] = [];
+    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
 
-    if (imageBase64) {
-      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-      contents.push({
+    const systemInstruction = `You are an OCR and transcription assistant for doctor's prescriptions.
+Your task is to transcribe ONLY what is visibly written or printed on the uploaded prescription image.
+
+CRITICAL SAFETY & EXTRACTION RULES:
+1. Extract ONLY information that is visibly present on the document.
+2. If a doctor name, patient name, clinic name, or date cannot be clearly read or is missing, set its value to null.
+3. NEVER invent a patient name, doctor name, clinic, or date.
+4. For each medication found, transcribe:
+   - medicine_name_as_written: Exact medication or active substance name as written on the paper. If unreadable, write "Unreadable text".
+   - dosage_as_written: The exact strength or dosage as written (e.g. "500mg", "10 mg"). If absent or illegible, set to null.
+   - frequency_as_written: The exact Sig or frequency instruction as written (e.g. "b.i.d.", "1 tab daily", "q.d."). If absent, set to null.
+   - timing_as_written: Any explicit time of day written (e.g. "morning", "bedtime", "after meals"). If not stated, set to null.
+   - duration_as_written: Exact duration as written (e.g. "7 days", "1 month"). If not stated, set to null.
+   - additional_instructions_as_written: Any cautionary remarks visibly written by the doctor (e.g. "with water", "finish all"). If not present, set to null.
+5. NEVER invent missing dosage, frequency, or instructions.
+6. Do NOT guess or extrapolate information from surrounding context.
+7. If any handwriting, word, dose, or symbol is blurred, ambiguous, cut off, or illegible, list it explicitly in uncertain_or_unreadable_fields with a brief description.`;
+
+    const contents = [
+      {
         inlineData: {
           mimeType: mimeType || 'image/jpeg',
           data: cleanBase64,
         },
-      });
-      contents.push({
-        text: 'Transcribe this doctor prescription image, decipher handwriting and Latin symbols, and extract all clinical details according to the schema.',
-      });
-    } else if (sampleContext) {
-      contents.push({
-        text: `Analyze this prescription data and provide structured clinical decoding and agent reports:\n${JSON.stringify(sampleContext, null, 2)}`,
-      });
-    } else {
-      contents.push({
-        text: 'Extract a standard primary care prescription with Amoxicillin-Clavulanate and supportive care with full agent reports.',
-      });
-    }
+      },
+      {
+        text: 'Transcribe this uploaded prescription document into structured JSON. Extract only text visibly written on the page. Set unreadable or missing values to null and list all unclear handwriting in uncertain_or_unreadable_fields.',
+      },
+    ];
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: { parts: contents },
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            doctorName: { type: Type.STRING },
-            specialty: { type: Type.STRING },
-            clinic: { type: Type.STRING },
-            date: { type: Type.STRING },
-            patientName: { type: Type.STRING },
-            patientAge: { type: Type.INTEGER },
-            diagnosisNote: { type: Type.STRING },
-            status: { type: Type.STRING },
-            medications: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  name: { type: Type.STRING },
-                  dosage: { type: Type.STRING },
-                  form: { type: Type.STRING },
-                  frequency: { type: Type.STRING },
-                  latinAbbr: { type: Type.STRING },
-                  decodedFrequency: { type: Type.STRING },
-                  duration: { type: Type.STRING },
-                  timing: { type: Type.STRING },
-                  foodRelation: { type: Type.STRING },
-                  instructions: { type: Type.STRING },
-                  precautions: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
+    const ocrModels = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+    let response: any = null;
+    let lastOcrError: any = null;
+
+    for (const modelName of ocrModels) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: { parts: contents },
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                doctor_name: { type: Type.STRING, nullable: true },
+                patient_name: { type: Type.STRING, nullable: true },
+                clinic_name: { type: Type.STRING, nullable: true },
+                prescription_date: { type: Type.STRING, nullable: true },
+                medications: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      medicine_name_as_written: { type: Type.STRING },
+                      dosage_as_written: { type: Type.STRING, nullable: true },
+                      frequency_as_written: { type: Type.STRING, nullable: true },
+                      timing_as_written: { type: Type.STRING, nullable: true },
+                      duration_as_written: { type: Type.STRING, nullable: true },
+                      additional_instructions_as_written: { type: Type.STRING, nullable: true },
+                      is_uncertain: { type: Type.BOOLEAN, nullable: true },
+                    },
+                    required: ['medicine_name_as_written'],
                   },
-                  purpose: { type: Type.STRING },
                 },
-                required: ['id', 'name', 'dosage', 'form', 'frequency', 'decodedFrequency', 'duration', 'timing', 'foodRelation', 'instructions', 'purpose'],
-              },
-            },
-            agentReports: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  agentNumber: { type: Type.INTEGER },
-                  agentName: { type: Type.STRING },
-                  finding: { type: Type.STRING },
-                  confidence: { type: Type.NUMBER },
-                  status: { type: Type.STRING },
+                uncertain_or_unreadable_fields: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
                 },
-                required: ['agentNumber', 'agentName', 'finding', 'confidence', 'status'],
               },
+              required: ['medications', 'uncertain_or_unreadable_fields'],
             },
           },
-          required: ['doctorName', 'specialty', 'clinic', 'date', 'patientName', 'medications', 'agentReports'],
-        },
-      },
-    });
+        });
+        if (response && response.text) {
+          break;
+        }
+      } catch (modelErr: any) {
+        lastOcrError = modelErr;
+        console.warn(`OCR model ${modelName} returned error:`, modelErr?.message || modelErr);
+      }
+    }
+
+    if (!response || !response.text) {
+      throw lastOcrError || new Error('OCR service temporarily unavailable across all candidates.');
+    }
 
     const parsedData = JSON.parse(response.text || '{}');
 
-    // Standardize IDs and ensure complete fields
-    if (parsedData.medications) {
-      parsedData.medications = parsedData.medications.map((m: any, idx: number) => ({
-        ...m,
-        id: m.id || `med-ai-${Date.now()}-${idx}`,
-        precautions: Array.isArray(m.precautions) ? m.precautions : [],
-      }));
-    }
-
-    res.json({
+    // Return the genuine extracted document data
+    return res.json({
       success: true,
-      source: 'gemini-2.5-flash',
-      prescription: {
-        id: `rx-${Date.now()}`,
-        title: `${parsedData.specialty || 'General'} Prescription`,
-        doctorName: parsedData.doctorName || 'Attending Physician, MD',
-        specialty: parsedData.specialty || 'Clinical Medicine',
-        clinic: parsedData.clinic || 'Medical Clinic',
-        date: parsedData.date || new Date().toISOString().split('T')[0],
-        patientName: parsedData.patientName || 'Sarah Jenkins',
-        patientAge: parsedData.patientAge || 46,
-        diagnosisNote: parsedData.diagnosisNote || 'Prescription regimen evaluated by MediAssist AI.',
-        status: 'Verified',
-        imagePlaceholderText: `Prescription Record - ${parsedData.doctorName}`,
-        sampleType: 'Custom Scan',
-        medications: parsedData.medications,
+      extraction: {
+        doctor_name: parsedData.doctor_name || null,
+        patient_name: parsedData.patient_name || null,
+        clinic_name: parsedData.clinic_name || null,
+        prescription_date: parsedData.prescription_date || null,
+        medications: Array.isArray(parsedData.medications)
+          ? parsedData.medications.map((m: any, idx: number) => ({
+              id: `med-${Date.now()}-${idx}`,
+              medicine_name_as_written: m.medicine_name_as_written || 'Unspecified',
+              dosage_as_written: m.dosage_as_written || null,
+              frequency_as_written: m.frequency_as_written || null,
+              timing_as_written: m.timing_as_written || null,
+              duration_as_written: m.duration_as_written || null,
+              additional_instructions_as_written: m.additional_instructions_as_written || null,
+              is_uncertain: Boolean(m.is_uncertain),
+            }))
+          : [],
+        uncertain_or_unreadable_fields: Array.isArray(parsedData.uncertain_or_unreadable_fields)
+          ? parsedData.uncertain_or_unreadable_fields
+          : [],
       },
-      agentReports: parsedData.agentReports,
     });
   } catch (err: any) {
-    console.error('Error in /api/scan-prescription:', err);
-    res.status(200).json({
-      success: true,
-      source: 'fallback-on-error',
-      message: 'Gemini extraction encountered a transient issue; returned safety-verified clinical parsing.',
-      prescription: req.body.sampleContext || getSampleFallbackPrescription(),
-      agentReports: getSampleAgentReports(),
+    console.error('OCR Extraction error in /api/scan-prescription:', err);
+    // NEVER return mock data! Return the genuine error
+    return res.status(500).json({
+      success: false,
+      error: `Prescription OCR failed: ${err.message || 'Unable to parse document'}. Please ensure the image is clear and legible.`,
     });
   }
 });
 
-// 2. Clinical Voice & Text Health Assistant Endpoint
+// Voice & Text Health Assistant Endpoint
 app.post('/api/voice-assistant', async (req, res) => {
   try {
-    const { query, activeMedications, history } = req.body;
+    const { query, activeMedications } = req.body;
 
     if (!query || typeof query !== 'string') {
       return res.status(400).json({ error: 'Query parameter is required.' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      // Fallback answers when no key is set
-      const answer = generateLocalClinicalAnswer(query);
+    if (!process.env.GEMINI_API_KEY) {
       return res.json({
-        answer,
-        source: 'synthetic-rule-engine',
+        answer: 'Gemini API key is not configured on the server. Please consult your physician or pharmacist for medical advice.',
+        source: 'server-unconfigured',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       });
     }
 
     const medicationsContext = Array.isArray(activeMedications) && activeMedications.length > 0
-      ? `Patient's active medications:\n` +
+      ? `Patient's confirmed medications:\n` +
         activeMedications
-          .map((m: any) => `- ${m.name} (${m.dosage}, ${m.form}): ${m.decodedFrequency || m.frequency}. Food rule: ${m.foodRelation}. Instructions: ${m.instructions}`)
+          .map((m: any) => `- ${m.name || m.medicine_name_as_written} (${m.dosage || m.dosage_as_written || 'unspecified dose'}): ${m.frequency || m.frequency_as_written || 'as directed'}`)
           .join('\n')
-      : 'No active medications provided.';
+      : 'No active medications on record.';
 
-    const systemInstruction = `You are MediAssist AI, an educational healthcare voice and text assistant.
-You help patients clearly understand their prescriptions, medication timing, Latin abbreviations (such as b.i.d., p.o., q.d., p.c.), and safe dietary habits.
-SAFETY CONSTITUTION:
-1. You are an educational tool, NOT a licensed prescribing doctor.
-2. NEVER modify dosages, suggest altering prescription courses, or diagnose medical conditions.
-3. If asked about dose adjustments or stopping drugs, explicitly instruct the user to consult their prescribing physician or pharmacist.
-4. Explain drug interactions (e.g., statins with grapefruit, milk with certain antibiotics) clearly and simply.
-5. Provide concise, reassuring, plain-language answers at a 6th-grade reading level.
+    const systemInstruction = `You are MediAssist AI, an educational healthcare transcription and prescription reading aid.
+IMPORTANT SAFETY INSTRUCTIONS:
+1. You are an educational tool, NOT a doctor or medical device.
+2. NEVER modify dosages, change prescriptions, or recommend treatments.
+3. If asked about taking or stopping drugs, explicitly advise consulting the prescribing physician or licensed pharmacist.
+4. Explain common medical abbreviations (like b.i.d. = twice daily) in plain, cautious language.
+5. Do NOT state that drug interactions were clinically evaluated unless confirmed by a certified pharmacist.
 ${medicationsContext}`;
 
-    const promptText = `Patient Query: "${query}"\nProvide a clear, patient-friendly explanation following the safety constitution.`;
+    const voiceCandidates = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+    let response: any = null;
+    let usedModel = 'gemini-flash-latest';
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: promptText,
-      config: {
-        systemInstruction,
-      },
-    });
+    for (const modelName of voiceCandidates) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: `User Query: "${query}"`,
+          config: {
+            systemInstruction,
+          },
+        });
+        if (response && response.text) {
+          usedModel = modelName;
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`Voice candidate ${modelName} returned error:`, err?.message || err);
+      }
+    }
 
-    const answer = response.text || 'I could not retrieve an answer at this time. Please consult your physician or pharmacist.';
+    const answer = response?.text || 'Always consult your prescribing doctor or pharmacist regarding specific medication instructions.';
 
     res.json({
       answer: answer.trim(),
-      source: 'gemini-2.5-flash',
+      source: usedModel,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
   } catch (err: any) {
     console.error('Error in /api/voice-assistant:', err);
     res.json({
-      answer: generateLocalClinicalAnswer(req.body.query || ''),
-      source: 'fallback-on-error',
+      answer: 'Unable to connect to the medical assistant service at this moment. Please consult your pharmacist or prescribing doctor for medical advice.',
+      source: 'error-fallback',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
   }
 });
-
-// Helper Fallback Prescriptions for Offline / Development Mode
-function getSampleFallbackPrescription() {
-  return {
-    id: 'rx-scanned-default',
-    title: 'Verified Clinical Prescription',
-    doctorName: 'Dr. Elena Gomez, MD',
-    specialty: 'Internal Medicine & Infectious Disease',
-    clinic: 'St. Jude Community Health Center',
-    date: new Date().toISOString().split('T')[0],
-    patientName: 'Sarah Jenkins',
-    patientAge: 46,
-    diagnosisNote: 'Bacterial sinusitis with persistent sinus headache and congestion.',
-    status: 'Verified',
-    imagePlaceholderText: 'St. Jude Health Center Rx #33109',
-    sampleType: 'Infection',
-    medications: [
-      {
-        id: 'med-scanned-1',
-        name: 'Amoxicillin-Clavulanate',
-        dosage: '875/125 mg',
-        form: 'Tablet',
-        frequency: '1 tab b.i.d. p.c.',
-        latinAbbr: 'b.i.d. (bis in die) p.c. (post cibum)',
-        decodedFrequency: 'Twice daily after meals (every 12 hours)',
-        duration: '7 Days',
-        timing: 'Twice daily',
-        foodRelation: 'After meals',
-        instructions: 'Take 1 tablet every 12 hours at the start of a meal. Complete full 7-day course.',
-        precautions: ['Finish entire prescription even if symptoms improve', 'Take with meals to minimize stomach upset'],
-        purpose: 'Antibacterial treatment for bacterial sinusitis',
-      },
-      {
-        id: 'med-scanned-2',
-        name: 'Fluticasone Propionate Nasal Spray',
-        dosage: '50 mcg/spray',
-        form: 'Drops',
-        frequency: '2 sprays per nostril q.d.',
-        latinAbbr: 'q.d. (quaque die)',
-        decodedFrequency: 'Two sprays in each nostril once daily in morning',
-        duration: '14 Days',
-        timing: 'Morning',
-        foodRelation: 'As needed',
-        instructions: 'Gently blow nose before use. Spray twice into each nostril each morning.',
-        precautions: ['Shake bottle gently before administering', 'Avoid spraying directly onto nasal septum'],
-        purpose: 'Nasal inflammation and sinus congestion relief',
-      },
-    ],
-  };
-}
-
-function getSampleAgentReports() {
-  return [
-    {
-      agentNumber: 1,
-      agentName: 'OCR & Handwriting Recognition Agent',
-      finding: 'Isolate physician cursive lines with 99.2% bounding box accuracy; recognized doctor signature and clinic header.',
-      confidence: 99.2,
-      status: 'Ready',
-    },
-    {
-      agentNumber: 2,
-      agentName: 'Clinical Formulation & Dosage Agent',
-      finding: 'Matched against USP & FDA pharmacopeias: standard Amoxicillin-Clavulanate 875/125mg formulation verified.',
-      confidence: 98.9,
-      status: 'Ready',
-    },
-    {
-      agentNumber: 3,
-      agentName: 'Drug Interaction & Safety Agent',
-      finding: 'Zero major contraindications detected across patient profile. Safe for concurrent administration with Lisinopril.',
-      confidence: 99.5,
-      status: 'Ready',
-    },
-    {
-      agentNumber: 4,
-      agentName: 'Patient Clarification & Translation Agent',
-      finding: 'Decoded "b.i.d. p.c." into plain-language 12-hour meal schedule. Drafted 6th-grade patient instructions.',
-      confidence: 99.8,
-      status: 'Ready',
-    },
-    {
-      agentNumber: 5,
-      agentName: 'Schedule & Adherence Planner Agent',
-      finding: 'Generated meal-synchronized clock reminders (08:30 AM and 08:30 PM) for 7-day antibiotic adherence.',
-      confidence: 99.4,
-      status: 'Ready',
-    },
-  ];
-}
-
-function generateLocalClinicalAnswer(query: string): string {
-  const q = query.toLowerCase();
-  if (q.includes('bid') || q.includes('b.i.d')) {
-    return '"b.i.d." stands for the Latin phrase "bis in die", meaning "twice daily". Take one dose in the morning and one in the evening, spaced roughly 12 hours apart.';
-  }
-  if (q.includes('food') || q.includes('meal') || q.includes('stomach')) {
-    return 'For oral medications: Amoxicillin-Clavulanate and Metformin should always be taken with or directly after food to protect your stomach lining. Lisinopril can be taken with or without food, but should be taken at the same time each morning.';
-  }
-  if (q.includes('grapefruit') || q.includes('atorvastatin') || q.includes('statin')) {
-    return 'Grapefruit compounds inhibit the liver enzyme (CYP3A4) that breaks down Atorvastatin, causing medication levels in your bloodstream to rise and increasing the risk of muscle cramps and liver strain.';
-  }
-  if (q.includes('miss') || q.includes('forgot')) {
-    return 'General rule: Take the missed dose as soon as you remember. If it is already close to your next scheduled dose, skip the missed dose and resume your normal schedule. Never take two doses at once.';
-  }
-  return `Clinical guideline for "${query}": Always adhere strictly to the prescription instructions provided by your doctor. If you experience adverse reactions, contact your physician or pharmacist immediately.`;
-}
 
 // Development vs Production Setup
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (!isProduction) {
-    // Development: Mount Vite middlewares for HMR and instant asset serving
     const { createServer } = await import('vite');
     const vite = await createServer({
       server: {
@@ -393,7 +268,6 @@ async function startServer() {
 
     app.use(vite.middlewares);
   } else {
-    // Production: Serve pre-built client assets from dist/
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
